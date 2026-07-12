@@ -48,6 +48,11 @@ Or point an MCP client's config at the installed console script
 |---------------|-----------------------------------------------------------------------|
 | `HAYABUSA_BIN`| Full path (or PATH-resolvable name) of the hayabusa binary to invoke. |
 
+Copy `.env.example` to `.env` and fill it in as a reference for what to set. Nothing auto-loads
+`.env`: export the variables yourself (or use a tool like `direnv`) before running `mcp-hayabusa`/
+`mcp dev`/`mcp run`, or, if installing into the Claude Desktop app, pass it straight to
+`mcp install src/mcp_hayabusa/server.py --env-file .env`.
+
 ## Tools
 
 ### `scan_evtx`

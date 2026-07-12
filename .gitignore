@@ -6,3 +6,4 @@ build/
 dist/
 .claude/settings.local.json
 /hayabusa/
+.env
