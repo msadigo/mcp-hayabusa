@@ -30,8 +30,13 @@ mcp dev src/mcp_hayabusa/server.py
 ```
 
 Actually exercising `scan_evtx` requires the `hayabusa` binary to be installed (see Configuration below
-— `scripts/download_hayabusa.py` handles this) and at least one real or sample `.evtx` file — Hayabusa's
-own repo ships sample `.evtx` files under `sample_evtx/` that are useful for this.
+— `scripts/download_hayabusa.py` handles this) and at least one real or sample `.evtx` file. Yamato
+Security ships a repo of sample `.evtx` files that's useful for this — clone it into `./sample_evtx/`
+(gitignored, not a submodule):
+
+```sh
+git clone https://github.com/Yamato-Security/hayabusa-sample-evtx.git sample_evtx
+```
 
 ## Architecture
 
