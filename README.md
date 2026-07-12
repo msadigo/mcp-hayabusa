@@ -15,6 +15,18 @@ MCP client (e.g. Claude Code) can run detection scans over `.evtx` files.
   (or built from source), available on `PATH`, or pointed to via the
   `HAYABUSA_BIN` environment variable.
 
+  `scripts/download_hayabusa.py` will fetch the latest release for your
+  platform and extract it to `./hayabusa/`:
+
+  ```sh
+  python scripts/download_hayabusa.py
+  # then either add ./hayabusa to PATH, or:
+  export HAYABUSA_BIN=./hayabusa/hayabusa   # ./hayabusa/hayabusa.exe on Windows
+  ```
+
+  Pass `--version vX.Y.Z` to pin a release, `--musl` for a musl build on
+  Linux, or `--force` to re-download.
+
 ## Install
 
 ```sh

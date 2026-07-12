@@ -14,6 +14,8 @@ Hayabusa detection scans over `.evtx` files.
 pip install -e .          # install the package (and mcp[cli] dependency) in editable mode
 mcp-hayabusa               # run the server over stdio (registered as a console script)
 python -m mcp_hayabusa.server   # equivalent, without the console script
+
+python scripts/download_hayabusa.py   # fetch the latest hayabusa binary for this platform into ./hayabusa/
 ```
 
 There is no test suite, linter, or build step configured yet.
@@ -27,9 +29,9 @@ tool calls:
 mcp dev src/mcp_hayabusa/server.py
 ```
 
-Actually exercising `scan_evtx` requires the `hayabusa` binary to be installed (see Configuration below)
-and at least one real or sample `.evtx` file — Hayabusa's own repo ships sample `.evtx` files under
-`sample_evtx/` that are useful for this.
+Actually exercising `scan_evtx` requires the `hayabusa` binary to be installed (see Configuration below
+— `scripts/download_hayabusa.py` handles this) and at least one real or sample `.evtx` file — Hayabusa's
+own repo ships sample `.evtx` files under `sample_evtx/` that are useful for this.
 
 ## Architecture
 
@@ -49,6 +51,12 @@ Two files carry all the logic:
 When adding a new Hayabusa-backed tool (e.g. wrapping `logon-summary`, `eid-metrics`, or `search`), follow
 this same split: put the subprocess/parsing logic in `hayabusa.py` as a plain function returning a
 dataclass, then add a thin `@mcp.tool()` wrapper in `server.py`.
+
+`scripts/download_hayabusa.py` is a standalone utility (not part of the `mcp_hayabusa` package, no
+dependency on `mcp`) that resolves the latest (or a pinned) Hayabusa GitHub release for the current
+OS/arch, downloads it, and extracts it into `./hayabusa/` — which is gitignored. It normalizes the
+extracted binary to `hayabusa`/`hayabusa.exe` (Hayabusa ships it version-suffixed, e.g.
+`hayabusa-3.10.0-win-x64.exe`) so `HAYABUSA_BIN` doesn't need updating across re-downloads.
 
 ### Non-interactivity
 
