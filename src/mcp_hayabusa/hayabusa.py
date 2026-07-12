@@ -92,11 +92,13 @@ def scan(
     binary = resolve_binary()
     subcommand = "csv-timeline" if output_format == "csv" else "json-timeline"
 
-    cleanup_output = output_path is None
+    # hayabusa refuses to write to a pre-existing output file (without -C/--clobber),
+    # so use a fresh temp directory rather than tempfile.mkstemp, which creates the file.
+    cleanup_dir: str | None = None
     if output_path is None:
         suffix = ".csv" if output_format == "csv" else ".json"
-        fd, output_path = tempfile.mkstemp(prefix="hayabusa_", suffix=suffix)
-        os.close(fd)
+        cleanup_dir = tempfile.mkdtemp(prefix="hayabusa_")
+        output_path = str(Path(cleanup_dir) / f"output{suffix}")
 
     command = [binary, subcommand]
     command += ["-f", str(target_path)] if is_file else ["-d", str(target_path)]
@@ -130,10 +132,33 @@ def scan(
 
     if proc.returncode == 0 and Path(output_path).exists():
         _attach_preview(result)
-        if cleanup_output:
-            Path(output_path).unlink(missing_ok=True)
+
+    if cleanup_dir:
+        shutil.rmtree(cleanup_dir, ignore_errors=True)
 
     return result
+
+
+def _iter_json_documents(text: str) -> list:
+    """Parse consecutive whitespace-separated JSON documents from `text`.
+
+    hayabusa's json-timeline output (without -L) is neither a JSON array nor
+    single-line JSONL: it's pretty-printed JSON objects concatenated back to
+    back. This handles that, plus a JSON array, plus compact JSONL, with the
+    same logic.
+    """
+    decoder = json.JSONDecoder()
+    idx, n = 0, len(text)
+    documents = []
+    while idx < n:
+        while idx < n and text[idx].isspace():
+            idx += 1
+        if idx >= n:
+            break
+        obj, end = decoder.raw_decode(text, idx)
+        documents.append(obj)
+        idx = end
+    return documents
 
 
 def _attach_preview(result: ScanResult, max_records: int = PREVIEW_RECORD_LIMIT) -> None:
@@ -152,18 +177,9 @@ def _attach_preview(result: ScanResult, max_records: int = PREVIEW_RECORD_LIMIT)
         result.preview = []
         return
 
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        # JSONL: one JSON object per line.
-        lines = [line for line in text.splitlines() if line.strip()]
-        result.record_count = len(lines)
-        result.preview = [json.loads(line) for line in lines[:max_records]]
-        return
+    documents = _iter_json_documents(text)
+    # A single JSON array document means the array elements are the records.
+    records = documents[0] if len(documents) == 1 and isinstance(documents[0], list) else documents
 
-    if isinstance(data, list):
-        result.record_count = len(data)
-        result.preview = data[:max_records]
-    else:
-        result.record_count = 1
-        result.preview = data
+    result.record_count = len(records)
+    result.preview = records[:max_records]
