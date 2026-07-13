@@ -12,13 +12,16 @@ import os
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+import yaml
 
 OutputFormat = Literal["csv", "json", "jsonl"]
 
 PREVIEW_RECORD_LIMIT = 20
+RULE_LIST_LIMIT = 50
 
 
 class HayabusaError(RuntimeError):
@@ -111,12 +114,7 @@ def scan(
     effective_rules_dir = rules_dir
     filter_dir_cleanup: str | None = None
     if rule_filter:
-        base = Path(rules_dir) if rules_dir else _resolve_default_rules_dir(binary)
-        if base is None or not base.is_dir():
-            raise HayabusaError(
-                "rule_filter requires a resolvable rules directory; pass rules_dir "
-                "explicitly (could not find a default ./rules directory)."
-            )
+        base = _resolve_rules_dir(rules_dir, binary=binary)
         filter_dir = _build_rule_filter_dir(base, rule_filter)
         filter_dir_cleanup = filter_dir
         effective_rules_dir = filter_dir
@@ -163,19 +161,44 @@ def scan(
     return result
 
 
-def _resolve_default_rules_dir(binary: str) -> Path | None:
-    """Best-effort default rules directory when rule_filter is used without rules_dir.
-
-    Mirrors Hayabusa's own default (./rules relative to cwd), falling back to
-    a ./rules directory next to the resolved binary (this repo's layout).
+def _resolve_rules_dir(rules_dir: str | None, *, binary: str | None = None) -> Path:
+    """Resolve a rules directory: `rules_dir` if given, else Hayabusa's own default
+    (./rules relative to cwd), falling back to a ./rules directory next to the
+    resolved binary (this repo's layout).
     """
+    if rules_dir:
+        base = Path(rules_dir)
+        if not base.is_dir():
+            raise HayabusaError(f"rules_dir does not exist or is not a directory: {rules_dir}")
+        return base
+
     cwd_rules = Path.cwd() / "rules"
     if cwd_rules.is_dir():
         return cwd_rules
+
+    if binary is None:
+        binary = resolve_binary()
     binary_rules = Path(binary).resolve().parent / "rules"
     if binary_rules.is_dir():
         return binary_rules
-    return None
+
+    raise HayabusaError(
+        "Could not resolve a rules directory; pass rules_dir explicitly (no default "
+        "./rules directory found relative to the current directory or the hayabusa binary)."
+    )
+
+
+def _rule_files_matching(base_dir: Path, keyword: str | None) -> list[Path]:
+    """Rule files under `base_dir` whose text case-insensitively contains `keyword`
+    (all rule files if `keyword` is None), sorted for stable ordering.
+    """
+    files = sorted(base_dir.rglob("*.yml"))
+    if not keyword:
+        return files
+    needle_lower = keyword.lower()
+    return [
+        path for path in files if needle_lower in path.read_text(encoding="utf-8", errors="replace").lower()
+    ]
 
 
 def _build_rule_filter_dir(base_dir: Path, needle: str) -> str:
@@ -184,12 +207,7 @@ def _build_rule_filter_dir(base_dir: Path, needle: str) -> str:
 
     Raises HayabusaError if no rule files match.
     """
-    needle_lower = needle.lower()
-    matches = [
-        path
-        for path in base_dir.rglob("*.yml")
-        if needle_lower in path.read_text(encoding="utf-8", errors="replace").lower()
-    ]
+    matches = _rule_files_matching(base_dir, needle)
     if not matches:
         raise HayabusaError(f"No rules under {base_dir} matched rule_filter={needle!r}")
 
@@ -197,6 +215,62 @@ def _build_rule_filter_dir(base_dir: Path, needle: str) -> str:
     for i, path in enumerate(matches):
         shutil.copy2(path, Path(filter_dir) / f"{i:04d}_{path.name}")
     return filter_dir
+
+
+@dataclass
+class RuleInfo:
+    path: str
+    id: str | None = None
+    title: str | None = None
+    level: str | None = None
+    status: str | None = None
+    description: str | None = None
+    author: str | None = None
+    tags: list[str] = field(default_factory=list)
+    logsource: dict = field(default_factory=dict)
+
+
+def list_rules(
+    rules_dir: str | None = None,
+    keyword: str | None = None,
+    max_results: int | None = None,
+) -> tuple[list[RuleInfo], int]:
+    """List Hayabusa/Sigma detection rules under `rules_dir` (default: Hayabusa's
+    bundled ./rules), optionally filtered to those whose rule file text
+    case-insensitively contains `keyword` — the same matching `scan()` uses for
+    `rule_filter`, so a keyword here can be passed straight to `rule_filter` later.
+
+    Returns (rules, total_matched), where `rules` is capped at `max_results`
+    (default RULE_LIST_LIMIT) but `total_matched` is the true match count.
+    """
+    base = _resolve_rules_dir(rules_dir)
+    matches = _rule_files_matching(base, keyword)
+    limit = max_results if max_results is not None else RULE_LIST_LIMIT
+
+    rules = []
+    for path in matches:
+        if len(rules) >= limit:
+            break
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
+        except yaml.YAMLError:
+            continue
+        if not isinstance(data, dict) or "detection" not in data:
+            continue
+        rules.append(
+            RuleInfo(
+                path=path.relative_to(base).as_posix(),
+                id=data.get("id"),
+                title=data.get("title"),
+                level=data.get("level"),
+                status=data.get("status"),
+                description=data.get("description"),
+                author=data.get("author"),
+                tags=data.get("tags") or [],
+                logsource=data.get("logsource") or {},
+            )
+        )
+    return rules, len(matches)
 
 
 def _iter_json_documents(text: str) -> list:

@@ -6,7 +6,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp_hayabusa.hayabusa import HayabusaError, ScanResult, scan
+from mcp_hayabusa.hayabusa import HayabusaError, RuleInfo, ScanResult, list_rules, scan
 
 mcp = FastMCP("hayabusa")
 
@@ -116,6 +116,60 @@ def scan_evtx(
         summary["stdout_tail"] = result.stdout_tail
         summary["stderr_tail"] = result.stderr_tail
     return summary
+
+
+def _rule_dict(rule: RuleInfo) -> dict:
+    return {
+        "path": rule.path,
+        "id": rule.id,
+        "title": rule.title,
+        "level": rule.level,
+        "status": rule.status,
+        "description": rule.description,
+        "author": rule.author,
+        "tags": rule.tags,
+        "logsource": rule.logsource,
+    }
+
+
+@mcp.tool()
+def get_hayabusa_rules(
+    keyword: str | None = None,
+    rules_dir: str | None = None,
+    max_results: int | None = None,
+) -> dict:
+    """List available Hayabusa/Sigma detection rules, optionally filtered by keyword.
+
+    Useful for understanding what rules exist before running scan_evtx — e.g. call
+    with keyword="mimikatz" to see which rules would be loaded by
+    scan_evtx(rule_filter="mimikatz"), since both use the same case-insensitive
+    match against rule file text.
+
+    Args:
+        keyword: Only return rules whose rule file text contains this string
+            (case-insensitive), e.g. "lateral" or "mimikatz". Omit to list all
+            rules (subject to max_results).
+        rules_dir: Optional path to a custom Sigma/Hayabusa rules directory.
+            Defaults to Hayabusa's bundled ./rules.
+        max_results: Cap on the number of rules returned (default 50).
+            total_matched in the response is always the true match count.
+
+    Returns:
+        A dict with total_matched (true count of matching rule files) and
+        rules: a list of {path, id, title, level, status, description, author,
+        tags, logsource}, capped at max_results.
+    """
+    try:
+        rules, total_matched = list_rules(rules_dir=rules_dir, keyword=keyword, max_results=max_results)
+    except HayabusaError as exc:
+        return {"error": str(exc)}
+
+    return {
+        "keyword": keyword,
+        "total_matched": total_matched,
+        "returned": len(rules),
+        "rules": [_rule_dict(r) for r in rules],
+    }
 
 
 def main() -> None:

@@ -45,13 +45,27 @@ Two files carry all the logic:
 - `src/mcp_hayabusa/hayabusa.py` — pure subprocess wrapper around the `hayabusa` binary. Owns binary
   resolution (`resolve_binary`, via `HAYABUSA_BIN` env var or `PATH`), building the `csv-timeline` /
   `json-timeline` command line, running it, and parsing the resulting CSV/JSON/JSONL output file into a
-  `ScanResult` (command run, exit code, stdout/stderr tails, total `record_count`, and a preview capped
-  at `PREVIEW_RECORD_LIMIT` records). Raises `HayabusaError` for a missing binary, missing target path,
-  or a timed-out scan. This module has no MCP dependency and can be tested/used standalone.
-- `src/mcp_hayabusa/server.py` — the MCP surface. A `FastMCP("hayabusa")` instance with one `@mcp.tool()`,
-  `scan_evtx`, which validates nothing itself — it just forwards arguments to `hayabusa.scan()` and shapes
-  the `ScanResult` into the dict returned to the MCP client, catching `HayabusaError` into an `{"error": ...}`
-  response rather than raising.
+  `ScanResult` (command run, exit code, stdout/stderr tails, total `record_count`, level/rule-title counts,
+  and a preview capped at `PREVIEW_RECORD_LIMIT`/`max_results` records). Raises `HayabusaError` for a
+  missing binary, missing target path, unresolvable rules directory, or a timed-out scan. This module has
+  no MCP dependency and can be tested/used standalone.
+  - `rule_filter` (on `scan()`) restricts which rules get loaded to those whose rule file text
+    case-insensitively contains a string — Hayabusa has no native free-text rule filter, so this copies
+    matching `*.yml` files from the resolved rules directory into a temp dir and points `-r` at it
+    (`_build_rule_filter_dir`). `_resolve_rules_dir` and `_rule_files_matching` are shared between this
+    and `list_rules` so the two stay in sync (a keyword you list with is exactly what `rule_filter` would
+    load).
+  - `list_rules` parses Sigma-format rule YAML (via PyYAML) into `RuleInfo` (id, title, level, status,
+    description, author, tags, logsource, path) without invoking the `hayabusa` binary at all — it's pure
+    filesystem + YAML parsing over the rules directory.
+- `src/mcp_hayabusa/server.py` — the MCP surface. A `FastMCP("hayabusa")` instance with two `@mcp.tool()`s:
+  - `scan_evtx`, which validates nothing itself — it just forwards arguments to `hayabusa.scan()` and shapes
+    the `ScanResult` into the dict returned to the MCP client (`result_detail="summary"`, the default,
+    condenses records and level/rule-title counts and only includes stdout/stderr tails on non-zero exit;
+    `"full"` returns everything), catching `HayabusaError` into an `{"error": ...}` response rather than
+    raising.
+  - `get_hayabusa_rules`, a thin wrapper over `hayabusa.list_rules()` for browsing/searching available
+    rules (e.g. before deciding on a `rule_filter` value) — same `{"error": ...}` handling on `HayabusaError`.
 
 When adding a new Hayabusa-backed tool (e.g. wrapping `logon-summary`, `eid-metrics`, or `search`), follow
 this same split: put the subprocess/parsing logic in `hayabusa.py` as a plain function returning a
