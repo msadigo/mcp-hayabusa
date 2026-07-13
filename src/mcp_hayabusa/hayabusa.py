@@ -152,11 +152,20 @@ def scan(
         stderr_tail=_tail(proc.stderr),
     )
 
-    if proc.returncode == 0 and Path(output_path).exists():
-        _attach_preview(result, max_records=max_results if max_results is not None else PREVIEW_RECORD_LIMIT)
-
-    if cleanup_dir:
-        shutil.rmtree(cleanup_dir, ignore_errors=True)
+    try:
+        if proc.returncode == 0 and Path(output_path).exists():
+            _attach_preview(result, max_records=max_results if max_results is not None else PREVIEW_RECORD_LIMIT)
+    except OSError as exc:
+        raise HayabusaError(
+            f"hayabusa exited successfully but its output file at '{output_path}' could not be "
+            f"read afterward ({exc}). This can happen if antivirus/endpoint security quarantined "
+            "or deleted it — Hayabusa's raw output embeds detection strings (tool/malware names) "
+            "that can trigger AV heuristics; consider excluding the output/temp directory from "
+            "real-time scanning."
+        ) from exc
+    finally:
+        if cleanup_dir:
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
 
     return result
 
