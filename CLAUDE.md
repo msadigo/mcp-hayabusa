@@ -16,9 +16,17 @@ mcp-hayabusa               # run the server over stdio (registered as a console 
 python -m mcp_hayabusa.server   # equivalent, without the console script
 
 python scripts/download_hayabusa.py   # fetch the latest hayabusa binary for this platform into ./hayabusa/
+
+pip install -e ".[test]"  # install with pytest
+pytest                     # run the test suite
 ```
 
-There is no test suite, linter, or build step configured yet.
+The test suite (`tests/`) is hermetic — it never invokes the real `hayabusa` binary or needs
+`sample_evtx/`. `scan()` tests monkeypatch `subprocess.run` with a fake that writes synthetic
+CSV/JSON to whatever `-o` path was requested; `list_rules()` tests run against a small synthetic
+rules directory (`tests/conftest.py`'s `rules_dir` fixture); `server.py` tests monkeypatch
+`hayabusa.scan`/`hayabusa.list_rules` directly to test response-shaping in isolation. There is no
+linter or build step configured yet.
 
 ### Manual testing
 
