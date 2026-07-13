@@ -11,15 +11,25 @@ from mcp_hayabusa.hayabusa import HayabusaError, ScanResult, scan
 mcp = FastMCP("hayabusa")
 
 
+_CONDENSED_FIELDS = ("Timestamp", "RuleTitle", "Level", "Computer", "Channel", "EventID")
+
+
+def _condense(record: dict) -> dict:
+    return {field: record.get(field) for field in _CONDENSED_FIELDS if field in record}
+
+
 @mcp.tool()
 def scan_evtx(
     target: str,
     is_file: bool = False,
     output_format: Literal["csv", "json", "jsonl"] = "json",
     rules_dir: str | None = None,
+    rule_filter: str | None = None,
     min_level: str | None = None,
     utc: bool = False,
     output_path: str | None = None,
+    result_detail: Literal["summary", "full"] = "summary",
+    max_results: int | None = None,
 ) -> dict:
     """Run a Hayabusa detection scan over Windows Event Log (.evtx) data.
 
@@ -32,10 +42,18 @@ def scan_evtx(
         is_file: True if `target` is a single .evtx file rather than a
             directory.
         output_format: "csv" (uses csv-timeline), or "json"/"jsonl"
-            (both use json-timeline; jsonl adds Hayabusa's -L flag).
+            (both use json-timeline; jsonl adds Hayabusa's -L flag). This
+            controls Hayabusa's own output format, not the shape of the
+            dict returned by this tool — see result_detail for that.
         rules_dir: Optional path to a custom Sigma/Hayabusa rules
             directory or file (passed as -r). Defaults to Hayabusa's
-            bundled ./rules.
+            bundled ./rules. Ignored if rule_filter is set (see below).
+        rule_filter: Only run rules whose rule file text contains this
+            string (case-insensitive), e.g. "lateral" or "mimikatz".
+            Hayabusa has no native free-text rule filter, so this copies
+            matching rule files from rules_dir (or Hayabusa's default
+            ./rules) into a temporary rules directory and scans with just
+            those loaded.
         min_level: Optional minimum alert level to load: "informational",
             "low", "medium", "high", or "critical" (passed as -m).
         utc: Output timestamps in UTC instead of local time (-U).
@@ -43,11 +61,17 @@ def scan_evtx(
             temporary file is used and deleted after a preview is
             extracted, so the full result set is only kept on disk when
             you pass this explicitly.
+        result_detail: "summary" (default) returns counts by level, the
+            top matching rules, and a condensed preview (key fields only);
+            stdout/stderr tails are only included on non-zero exit. "full"
+            returns the complete record preview with all fields plus
+            stdout/stderr tails, as before.
+        max_results: Cap on the number of preview records returned
+            (default 20). Does not affect record_count, which is always
+            the true total.
 
     Returns:
-        A dict with the command that was run, its exit code, a truncated
-        stdout/stderr tail, the total record_count found, and a preview
-        of up to 20 records.
+        A dict shaped per result_detail; see above.
     """
     try:
         result: ScanResult = scan(
@@ -55,23 +79,43 @@ def scan_evtx(
             is_file=is_file,
             output_format=output_format,
             rules_dir=rules_dir,
+            rule_filter=rule_filter,
             min_level=min_level,
             utc=utc,
             output_path=output_path,
+            max_results=max_results,
         )
     except HayabusaError as exc:
         return {"error": str(exc)}
 
-    return {
-        "command": result.command,
+    if result_detail == "full":
+        return {
+            "command": result.command,
+            "returncode": result.returncode,
+            "output_format": result.output_format,
+            "output_path": output_path,
+            "rule_filter": rule_filter,
+            "record_count": result.record_count,
+            "level_counts": result.level_counts,
+            "top_rules": result.top_rules,
+            "preview": result.preview,
+            "stdout_tail": result.stdout_tail,
+            "stderr_tail": result.stderr_tail,
+        }
+
+    summary: dict = {
         "returncode": result.returncode,
-        "output_format": result.output_format,
         "output_path": output_path,
+        "rule_filter": rule_filter,
         "record_count": result.record_count,
-        "preview": result.preview,
-        "stdout_tail": result.stdout_tail,
-        "stderr_tail": result.stderr_tail,
+        "level_counts": result.level_counts,
+        "top_rules": result.top_rules,
+        "preview": [_condense(r) for r in result.preview] if isinstance(result.preview, list) else result.preview,
     }
+    if result.returncode != 0:
+        summary["stdout_tail"] = result.stdout_tail
+        summary["stderr_tail"] = result.stderr_tail
+    return summary
 
 
 def main() -> None:

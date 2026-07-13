@@ -61,6 +61,8 @@ class ScanResult:
     stderr_tail: str
     record_count: int | None = None
     preview: list[dict] | dict | None = None
+    level_counts: dict[str, int] | None = None
+    top_rules: list[dict] | None = None
 
 
 def _tail(text: str, lines: int = 40) -> str:
@@ -73,9 +75,11 @@ def scan(
     is_file: bool = False,
     output_format: OutputFormat = "json",
     rules_dir: str | None = None,
+    rule_filter: str | None = None,
     min_level: str | None = None,
     utc: bool = False,
     output_path: str | None = None,
+    max_results: int | None = None,
     extra_args: list[str] | None = None,
     timeout: int = 1800,
 ) -> ScanResult:
@@ -84,6 +88,10 @@ def scan(
     Always passes -w/-q so the scan runs non-interactively (no rule-config
     wizard, no launch banner), which is required since there is no stdin/tty
     when invoked from an MCP tool call.
+
+    `rule_filter`, if given, restricts which rules are loaded to those whose
+    rule file text case-insensitively contains the string (see
+    `_build_rule_filter_dir`) — Hayabusa has no native free-text rule filter.
     """
     target_path = Path(target)
     if not target_path.exists():
@@ -100,11 +108,24 @@ def scan(
         cleanup_dir = tempfile.mkdtemp(prefix="hayabusa_")
         output_path = str(Path(cleanup_dir) / f"output{suffix}")
 
+    effective_rules_dir = rules_dir
+    filter_dir_cleanup: str | None = None
+    if rule_filter:
+        base = Path(rules_dir) if rules_dir else _resolve_default_rules_dir(binary)
+        if base is None or not base.is_dir():
+            raise HayabusaError(
+                "rule_filter requires a resolvable rules directory; pass rules_dir "
+                "explicitly (could not find a default ./rules directory)."
+            )
+        filter_dir = _build_rule_filter_dir(base, rule_filter)
+        filter_dir_cleanup = filter_dir
+        effective_rules_dir = filter_dir
+
     command = [binary, subcommand]
     command += ["-f", str(target_path)] if is_file else ["-d", str(target_path)]
     command += ["-o", output_path, "-w", "-q"]
-    if rules_dir:
-        command += ["-r", rules_dir]
+    if effective_rules_dir:
+        command += ["-r", effective_rules_dir]
     if min_level:
         command += ["-m", min_level]
     if utc:
@@ -120,6 +141,9 @@ def scan(
         raise HayabusaError(f"Failed to execute hayabusa binary at '{binary}': {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise HayabusaError(f"hayabusa scan timed out after {timeout}s") from exc
+    finally:
+        if filter_dir_cleanup:
+            shutil.rmtree(filter_dir_cleanup, ignore_errors=True)
 
     result = ScanResult(
         command=command,
@@ -131,12 +155,48 @@ def scan(
     )
 
     if proc.returncode == 0 and Path(output_path).exists():
-        _attach_preview(result)
+        _attach_preview(result, max_records=max_results if max_results is not None else PREVIEW_RECORD_LIMIT)
 
     if cleanup_dir:
         shutil.rmtree(cleanup_dir, ignore_errors=True)
 
     return result
+
+
+def _resolve_default_rules_dir(binary: str) -> Path | None:
+    """Best-effort default rules directory when rule_filter is used without rules_dir.
+
+    Mirrors Hayabusa's own default (./rules relative to cwd), falling back to
+    a ./rules directory next to the resolved binary (this repo's layout).
+    """
+    cwd_rules = Path.cwd() / "rules"
+    if cwd_rules.is_dir():
+        return cwd_rules
+    binary_rules = Path(binary).resolve().parent / "rules"
+    if binary_rules.is_dir():
+        return binary_rules
+    return None
+
+
+def _build_rule_filter_dir(base_dir: Path, needle: str) -> str:
+    """Copy rule files under `base_dir` whose text matches `needle` (case-insensitive)
+    into a fresh temp directory, and return its path.
+
+    Raises HayabusaError if no rule files match.
+    """
+    needle_lower = needle.lower()
+    matches = [
+        path
+        for path in base_dir.rglob("*.yml")
+        if needle_lower in path.read_text(encoding="utf-8", errors="replace").lower()
+    ]
+    if not matches:
+        raise HayabusaError(f"No rules under {base_dir} matched rule_filter={needle!r}")
+
+    filter_dir = tempfile.mkdtemp(prefix="hayabusa_rule_filter_")
+    for i, path in enumerate(matches):
+        shutil.copy2(path, Path(filter_dir) / f"{i:04d}_{path.name}")
+    return filter_dir
 
 
 def _iter_json_documents(text: str) -> list:
@@ -161,6 +221,23 @@ def _iter_json_documents(text: str) -> list:
     return documents
 
 
+def _summarize(records: list[dict], top_n: int = 20) -> tuple[dict[str, int], list[dict]]:
+    level_counts: dict[str, int] = {}
+    rule_counts: dict[tuple[str, str], int] = {}
+    for record in records:
+        level = record.get("Level") or "unknown"
+        level_counts[level] = level_counts.get(level, 0) + 1
+        title = record.get("RuleTitle") or "unknown"
+        key = (title, level)
+        rule_counts[key] = rule_counts.get(key, 0) + 1
+
+    top_rules = [
+        {"rule_title": title, "level": level, "count": count}
+        for (title, level), count in sorted(rule_counts.items(), key=lambda kv: kv[1], reverse=True)[:top_n]
+    ]
+    return level_counts, top_rules
+
+
 def _attach_preview(result: ScanResult, max_records: int = PREVIEW_RECORD_LIMIT) -> None:
     path = Path(result.output_path)
 
@@ -168,12 +245,15 @@ def _attach_preview(result: ScanResult, max_records: int = PREVIEW_RECORD_LIMIT)
         with path.open(newline="", encoding="utf-8-sig", errors="replace") as f:
             rows = list(csv.DictReader(f))
         result.record_count = len(rows)
+        result.level_counts, result.top_rules = _summarize(rows)
         result.preview = rows[:max_records]
         return
 
     text = path.read_text(encoding="utf-8-sig", errors="replace")
     if not text.strip():
         result.record_count = 0
+        result.level_counts = {}
+        result.top_rules = []
         result.preview = []
         return
 
@@ -182,4 +262,5 @@ def _attach_preview(result: ScanResult, max_records: int = PREVIEW_RECORD_LIMIT)
     records = documents[0] if len(documents) == 1 and isinstance(documents[0], list) else documents
 
     result.record_count = len(records)
+    result.level_counts, result.top_rules = _summarize(records)
     result.preview = records[:max_records]
