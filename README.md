@@ -1,5 +1,6 @@
 # mcp-hayabusa
 
+[![Tests](https://github.com/msadigo/mcp-hayabusa/actions/workflows/tests.yml/badge.svg)](https://github.com/msadigo/mcp-hayabusa/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
