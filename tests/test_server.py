@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from mcp_hayabusa import server
 from mcp_hayabusa.hayabusa import HayabusaError, RuleInfo, ScanResult
 
@@ -196,3 +198,81 @@ def test_get_hayabusa_rules_error_passthrough(monkeypatch):
     monkeypatch.setattr(server, "list_rules", lambda **k: (_ for _ in ()).throw(HayabusaError("no rules dir")))
 
     assert server.get_hayabusa_rules() == {"error": "no rules dir"}
+
+
+# --- hayabusa://attack resources -----------------------------------------------
+
+
+def _canned_grouped():
+    return {
+        "T1003.001": [_canned_rules()[0]],
+        "T1003.002": [
+            RuleInfo(
+                path="misc/other.yml",
+                id="55555555-5555-5555-5555-555555555555",
+                title="Other Rule",
+                level="medium",
+                tags=["attack.t1003.002"],
+            )
+        ],
+    }
+
+
+def test_attack_index_resource_shapes_response(monkeypatch):
+    monkeypatch.setattr(server, "list_attack_techniques", lambda: _canned_grouped())
+
+    out = server.attack_index_resource()
+
+    assert out == {
+        "total_techniques": 2,
+        "techniques": [
+            {"technique_id": "T1003.001", "rule_count": 1},
+            {"technique_id": "T1003.002", "rule_count": 1},
+        ],
+    }
+
+
+def test_attack_technique_resource_shapes_response(monkeypatch):
+    monkeypatch.setattr(
+        server, "get_attack_technique_rules", lambda technique_id: _canned_rules() if technique_id == "T1003.001" else []
+    )
+
+    out = server.attack_technique_resource("T1003.001")
+
+    assert out["technique_id"] == "T1003.001"
+    assert out["rule_count"] == 1
+    assert out["rules"][0]["title"] == "HackTool - Mimikatz Execution"
+
+
+def test_attack_technique_resource_normalizes_case_in_response(monkeypatch):
+    monkeypatch.setattr(server, "get_attack_technique_rules", lambda technique_id: [])
+
+    out = server.attack_technique_resource("t1003.001")
+
+    assert out == {"technique_id": "T1003.001", "rule_count": 0, "rules": []}
+
+
+# --- hayabusa://rules/{path} resource -------------------------------------------
+
+
+def test_rule_resource_returns_raw_yaml(monkeypatch):
+    captured = {}
+
+    def fake_read_rule_file(path):
+        captured["path"] = path
+        return "title: Example\ndetection:\n  selection: {}\n"
+
+    monkeypatch.setattr(server, "read_rule_file", fake_read_rule_file)
+
+    out = server.rule_resource("creds%2Fmimikatz.yml")
+
+    # The %2F is percent-decoded back to '/' before being passed on.
+    assert captured["path"] == "creds/mimikatz.yml"
+    assert out == "title: Example\ndetection:\n  selection: {}\n"
+
+
+def test_rule_resource_error_passthrough(monkeypatch):
+    monkeypatch.setattr(server, "read_rule_file", lambda path: (_ for _ in ()).throw(HayabusaError("not found")))
+
+    with pytest.raises(HayabusaError, match="not found"):
+        server.rule_resource("missing.yml")

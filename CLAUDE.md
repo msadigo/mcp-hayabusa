@@ -75,9 +75,35 @@ Two files carry all the logic:
   - `get_hayabusa_rules`, a thin wrapper over `hayabusa.list_rules()` for browsing/searching available
     rules (e.g. before deciding on a `rule_filter` value) — same `{"error": ...}` handling on `HayabusaError`.
 
+  It also exposes the same rule data as three MCP **Resources** — a read-only, browsable knowledge base
+  the client can navigate directly instead of only through tool calls:
+  - `hayabusa://attack` — static resource; index of every ATT&CK technique ID present in the loaded rule
+    set (parsed from tags like `attack.t1003.001` by `hayabusa.list_attack_techniques()`), each with a
+    rule count. Answers "what technique coverage do we have?" in one read.
+  - `hayabusa://attack/{technique_id}` — template resource; the rules tagged with one technique (e.g.
+    `T1003` or `T1003.001`, case-insensitive), via `hayabusa.get_attack_technique_rules()`. Answers "what
+    rules do we have for T1003?" directly.
+  - `hayabusa://rules/{path}` — template resource; the raw Sigma YAML (including the actual `detection:`
+    logic, which `RuleInfo`/`get_hayabusa_rules` deliberately omit) for one rule file, via
+    `hayabusa.read_rule_file()`. `path` is a rule's `path` field from `get_hayabusa_rules` or an ATT&CK
+    resource, with every `/` percent-encoded (`%2F`) — MCP resource URI templates only match a single path
+    segment, so nested rule paths (the norm here) need this encoding; `server.rule_resource` percent-decodes
+    before resolving.
+
+  Resource errors (bad path, path traversal, unknown technique with no matches — which is *not* an error,
+  just an empty result) are raised as `HayabusaError` and let propagate, unlike tools' `{"error": ...}`
+  convention — FastMCP turns an uncaught exception from a resource function into a protocol-level
+  `ResourceError` automatically, which is the correct behavior for reads (see `mcp.server.fastmcp.server
+  .FastMCPServer.read_resource`).
+
+  `hayabusa.list_attack_techniques()` always parses every rule file with no cap (unlike `list_rules()`,
+  which caps at `RULE_LIST_LIMIT`) because technique IDs, not individual rules, are the browsable unit —
+  the bundled rule set is ~5000 files, too many to list flatly, but only a few hundred distinct techniques.
+
 When adding a new Hayabusa-backed tool (e.g. wrapping `logon-summary`, `eid-metrics`, or `search`), follow
 this same split: put the subprocess/parsing logic in `hayabusa.py` as a plain function returning a
-dataclass, then add a thin `@mcp.tool()` wrapper in `server.py`.
+dataclass, then add a thin `@mcp.tool()` wrapper (or `@mcp.resource()` wrapper, for browsable/read-only
+data) in `server.py`.
 
 `scripts/download_hayabusa.py` is a standalone utility (not part of the `mcp_hayabusa` package, no
 dependency on `mcp`) that resolves the latest (or a pinned) Hayabusa GitHub release for the current

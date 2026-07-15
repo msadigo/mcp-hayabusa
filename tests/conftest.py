@@ -41,12 +41,33 @@ _MIMIKATZ_RULE = """
     author: Test Author
     tags:
         - attack.credential-access
+        - attack.t1003.001
+        - attack.t1003.002
     logsource:
         product: windows
         service: sysmon
     detection:
         selection:
             Image|endswith: mimikatz.exe
+        condition: selection
+    """
+
+_LSASS_RULE = """
+    title: LSASS Memory Dump
+    id: 44444444-4444-4444-4444-444444444444
+    level: critical
+    status: stable
+    description: Detects direct access to LSASS memory, another credential dumping technique.
+    author: Test Author
+    tags:
+        - attack.credential-access
+        - attack.t1003.001
+    logsource:
+        product: windows
+        service: sysmon
+    detection:
+        selection:
+            TargetImage|endswith: lsass.exe
         condition: selection
     """
 
@@ -65,6 +86,7 @@ _MALFORMED_RULE = "title: Broken Rule mentions mimikatz\ndetection:\n\tselection
 _RULES = {
     "logon/suspicious_logon.yml": textwrap.dedent(_LOGON_RULE).strip() + "\n",
     "creds/mimikatz.yml": textwrap.dedent(_MIMIKATZ_RULE).strip() + "\n",
+    "creds/lsass_dump.yml": textwrap.dedent(_LSASS_RULE).strip() + "\n",
     "misc/no_detection.yml": textwrap.dedent(_NO_DETECTION_RULE).strip() + "\n",
     "misc/malformed.yml": _MALFORMED_RULE,
 }
@@ -72,7 +94,12 @@ _RULES = {
 
 @pytest.fixture
 def rules_dir(tmp_path):
-    """A synthetic rules directory: 2 valid rules, 1 non-rule yml, 1 malformed yml."""
+    """A synthetic rules directory: 3 valid rules, 1 non-rule yml, 1 malformed yml.
+
+    ATT&CK tags: mimikatz.yml -> T1003.001, T1003.002; lsass_dump.yml -> T1003.001.
+    So T1003.001 has 2 rules, T1003.002 has 1, and T1003 (the parent, untagged
+    directly) has none — exercises list_attack_techniques() grouping/multi-tag.
+    """
     base = tmp_path / "rules"
     for rel_path, content in _RULES.items():
         path = base / rel_path

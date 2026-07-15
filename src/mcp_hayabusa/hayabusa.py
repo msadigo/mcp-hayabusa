@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -239,6 +240,29 @@ class RuleInfo:
     logsource: dict = field(default_factory=dict)
 
 
+def _parse_rule_file(path: Path, base: Path) -> RuleInfo | None:
+    """Parse one Sigma rule YAML file into a RuleInfo, or None if it isn't a valid
+    Sigma detection rule (invalid YAML, or no `detection` block).
+    """
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict) or "detection" not in data:
+        return None
+    return RuleInfo(
+        path=path.relative_to(base).as_posix(),
+        id=data.get("id"),
+        title=data.get("title"),
+        level=data.get("level"),
+        status=data.get("status"),
+        description=data.get("description"),
+        author=data.get("author"),
+        tags=data.get("tags") or [],
+        logsource=data.get("logsource") or {},
+    )
+
+
 def list_rules(
     rules_dir: str | None = None,
     keyword: str | None = None,
@@ -260,26 +284,79 @@ def list_rules(
     for path in matches:
         if len(rules) >= limit:
             break
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
-        except yaml.YAMLError:
-            continue
-        if not isinstance(data, dict) or "detection" not in data:
-            continue
-        rules.append(
-            RuleInfo(
-                path=path.relative_to(base).as_posix(),
-                id=data.get("id"),
-                title=data.get("title"),
-                level=data.get("level"),
-                status=data.get("status"),
-                description=data.get("description"),
-                author=data.get("author"),
-                tags=data.get("tags") or [],
-                logsource=data.get("logsource") or {},
-            )
-        )
+        rule = _parse_rule_file(path, base)
+        if rule is not None:
+            rules.append(rule)
     return rules, len(matches)
+
+
+_ATTACK_TAG_RE = re.compile(r"^attack\.(t\d{4}(?:\.\d{3})?)$", re.IGNORECASE)
+
+
+def _technique_ids(tags: list[str]) -> list[str]:
+    """Extract ATT&CK technique IDs (e.g. 'T1003', 'T1003.001') from a rule's Sigma
+    `tags`, which encode them as e.g. 'attack.t1003.001'. Tactic tags like
+    'attack.credential-access' don't match this shape and are ignored.
+    """
+    ids = []
+    for tag in tags:
+        match = _ATTACK_TAG_RE.match(tag.strip())
+        if match:
+            ids.append(match.group(1).upper())
+    return ids
+
+
+def list_attack_techniques(rules_dir: str | None = None) -> dict[str, list[RuleInfo]]:
+    """Group every valid rule under `rules_dir` by ATT&CK technique ID found in its
+    tags (see `_technique_ids`). A rule tagged with multiple technique IDs appears
+    under each; rules with no technique tag are omitted entirely.
+
+    Unlike list_rules(), this always parses every rule file with no cap and no
+    keyword — technique IDs, not individual rules, are the browsable unit here, and
+    the full ruleset (thousands of files) is too large to list flatly.
+
+    Returns a dict sorted by technique ID.
+    """
+    base = _resolve_rules_dir(rules_dir)
+    grouped: dict[str, list[RuleInfo]] = {}
+    for path in _rule_files_matching(base, None):
+        rule = _parse_rule_file(path, base)
+        if rule is None:
+            continue
+        for technique_id in _technique_ids(rule.tags):
+            grouped.setdefault(technique_id, []).append(rule)
+    return dict(sorted(grouped.items()))
+
+
+def get_attack_technique_rules(technique_id: str, rules_dir: str | None = None) -> list[RuleInfo]:
+    """Rules tagged with a specific ATT&CK technique ID, e.g. 'T1003' or 'T1003.001'
+    (case-insensitive). Empty list if none match.
+    """
+    return list_attack_techniques(rules_dir).get(technique_id.strip().upper(), [])
+
+
+def read_rule_file(path: str, rules_dir: str | None = None) -> str:
+    """Return the raw YAML text of a single rule file at `path` — a posix-style
+    path relative to `rules_dir`, matching RuleInfo.path as returned by list_rules()
+    and list_attack_techniques().
+
+    Raises HayabusaError if `path` doesn't end in .yml/.yaml, escapes `rules_dir`,
+    or doesn't exist.
+    """
+    if not path.lower().endswith((".yml", ".yaml")):
+        raise HayabusaError(f"Not a rule file (must end in .yml/.yaml): {path}")
+
+    base = _resolve_rules_dir(rules_dir).resolve()
+    candidate = (base / path).resolve()
+    try:
+        candidate.relative_to(base)
+    except ValueError:
+        raise HayabusaError(f"Rule path escapes the rules directory: {path}")
+
+    if not candidate.is_file():
+        raise HayabusaError(f"Rule file not found: {path}")
+
+    return candidate.read_text(encoding="utf-8", errors="replace")
 
 
 def _iter_json_documents(text: str) -> list:

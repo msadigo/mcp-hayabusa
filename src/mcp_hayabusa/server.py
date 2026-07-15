@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import unquote
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp_hayabusa.hayabusa import HayabusaError, RuleInfo, ScanResult, list_rules, scan
+from mcp_hayabusa.hayabusa import (
+    HayabusaError,
+    RuleInfo,
+    ScanResult,
+    get_attack_technique_rules,
+    list_attack_techniques,
+    list_rules,
+    read_rule_file,
+    scan,
+)
 
 mcp = FastMCP("hayabusa")
 
@@ -157,7 +167,9 @@ def get_hayabusa_rules(
     Returns:
         A dict with total_matched (true count of matching rule files) and
         rules: a list of {path, id, title, level, status, description, author,
-        tags, logsource}, capped at max_results.
+        tags, logsource}, capped at max_results. Each rule's `path` can be read
+        in full (including its detection logic) via the hayabusa://rules/{path}
+        resource — percent-encode any '/' in the path first.
     """
     try:
         rules, total_matched = list_rules(rules_dir=rules_dir, keyword=keyword, max_results=max_results)
@@ -170,6 +182,65 @@ def get_hayabusa_rules(
         "returned": len(rules),
         "rules": [_rule_dict(r) for r in rules],
     }
+
+
+@mcp.resource(
+    "hayabusa://attack",
+    name="attack-index",
+    title="ATT&CK technique index",
+    mime_type="application/json",
+)
+def attack_index_resource() -> dict:
+    """Index of every ATT&CK technique ID present in the loaded Sigma rule set
+    (parsed from rule tags like 'attack.t1003.001'), with a rule count for each.
+
+    Drill into a specific technique's matching rules via
+    hayabusa://attack/{technique_id}, e.g. hayabusa://attack/T1003.
+    """
+    grouped = list_attack_techniques()
+    return {
+        "total_techniques": len(grouped),
+        "techniques": [{"technique_id": tid, "rule_count": len(rules)} for tid, rules in grouped.items()],
+    }
+
+
+@mcp.resource(
+    "hayabusa://attack/{technique_id}",
+    name="attack-technique",
+    title="Rules for an ATT&CK technique",
+    mime_type="application/json",
+)
+def attack_technique_resource(technique_id: str) -> dict:
+    """Rules tagged with a specific ATT&CK technique ID, e.g. 'T1003' or
+    'T1003.001' (case-insensitive). Answers "what rules do we have for T1003?".
+
+    rule_count is 0 with an empty rules list if no loaded rule is tagged with
+    this technique — not an error, just no matches.
+    """
+    rules = get_attack_technique_rules(technique_id)
+    return {
+        "technique_id": technique_id.strip().upper(),
+        "rule_count": len(rules),
+        "rules": [_rule_dict(r) for r in rules],
+    }
+
+
+@mcp.resource(
+    "hayabusa://rules/{path}",
+    name="rule-file",
+    title="Raw Sigma rule YAML",
+    mime_type="application/yaml",
+)
+def rule_resource(path: str) -> str:
+    """Raw Sigma rule YAML (including its actual `detection:` logic) for a single
+    rule file.
+
+    `path` is the rule's `path` field as returned by get_hayabusa_rules or an
+    ATT&CK resource, with each '/' percent-encoded as %2F — MCP resource URI
+    templates only match a single path segment, so nested rule paths (the norm)
+    need this encoding. This function percent-decodes it before resolving.
+    """
+    return read_rule_file(unquote(path))
 
 
 def main() -> None:

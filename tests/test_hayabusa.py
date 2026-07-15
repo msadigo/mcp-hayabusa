@@ -136,10 +136,14 @@ def test_output_file_read_failure_becomes_hayabusa_error(target_dir, fake_binary
 def test_list_rules_no_keyword_returns_all_matched_but_only_valid_rules(rules_dir):
     rules, total_matched = list_rules(rules_dir=str(rules_dir))
 
-    # All 4 .yml files match (no keyword filter), but only the 2 with a
+    # All 5 .yml files match (no keyword filter), but only the 3 with a
     # `detection` block and valid YAML become RuleInfo entries.
-    assert total_matched == 4
-    assert {r.title for r in rules} == {"Suspicious Logon", "HackTool - Mimikatz Execution"}
+    assert total_matched == 5
+    assert {r.title for r in rules} == {
+        "Suspicious Logon",
+        "HackTool - Mimikatz Execution",
+        "LSASS Memory Dump",
+    }
 
 
 def test_list_rules_keyword_matches_raw_text_but_only_parses_valid_yaml(rules_dir):
@@ -181,7 +185,7 @@ def test_list_rules_extracts_fields(rules_dir):
 def test_list_rules_max_results_caps_returned_but_not_total_matched(rules_dir):
     rules, total_matched = list_rules(rules_dir=str(rules_dir), max_results=1)
 
-    assert total_matched == 4
+    assert total_matched == 5
     assert len(rules) == 1
 
 
@@ -195,3 +199,63 @@ def test_list_rules_no_keyword_match_returns_empty(rules_dir):
 def test_list_rules_bad_rules_dir_raises(tmp_path):
     with pytest.raises(HayabusaError, match="rules_dir"):
         list_rules(rules_dir=str(tmp_path / "missing"))
+
+
+# --- list_attack_techniques / get_attack_technique_rules ------------------------
+
+
+def test_list_attack_techniques_groups_by_technique_id(rules_dir):
+    grouped = hayabusa.list_attack_techniques(rules_dir=str(rules_dir))
+
+    # mimikatz.yml is tagged with both T1003.001 and T1003.002; lsass_dump.yml
+    # only T1003.001. The bare parent T1003 is never tagged directly, so it's
+    # absent. attack.credential-access (a tactic, not a technique) never appears.
+    assert set(grouped) == {"T1003.001", "T1003.002"}
+    assert {r.title for r in grouped["T1003.001"]} == {"HackTool - Mimikatz Execution", "LSASS Memory Dump"}
+    assert [r.title for r in grouped["T1003.002"]] == ["HackTool - Mimikatz Execution"]
+
+
+def test_list_attack_techniques_sorted_by_technique_id(rules_dir):
+    grouped = hayabusa.list_attack_techniques(rules_dir=str(rules_dir))
+
+    assert list(grouped) == sorted(grouped)
+
+
+def test_get_attack_technique_rules_is_case_insensitive(rules_dir):
+    rules = hayabusa.get_attack_technique_rules("t1003.001", rules_dir=str(rules_dir))
+
+    assert {r.title for r in rules} == {"HackTool - Mimikatz Execution", "LSASS Memory Dump"}
+
+
+def test_get_attack_technique_rules_no_match_returns_empty(rules_dir):
+    assert hayabusa.get_attack_technique_rules("T9999", rules_dir=str(rules_dir)) == []
+
+
+def test_list_attack_techniques_bad_rules_dir_raises(tmp_path):
+    with pytest.raises(HayabusaError, match="rules_dir"):
+        hayabusa.list_attack_techniques(rules_dir=str(tmp_path / "missing"))
+
+
+# --- read_rule_file --------------------------------------------------------------
+
+
+def test_read_rule_file_returns_raw_text(rules_dir):
+    text = hayabusa.read_rule_file("creds/mimikatz.yml", rules_dir=str(rules_dir))
+
+    assert "title: 'HackTool - Mimikatz Execution'" in text
+    assert "detection:" in text
+
+
+def test_read_rule_file_rejects_non_yaml_suffix(rules_dir):
+    with pytest.raises(HayabusaError, match=r"\.yml/\.yaml"):
+        hayabusa.read_rule_file("creds/mimikatz.exe", rules_dir=str(rules_dir))
+
+
+def test_read_rule_file_rejects_path_traversal(rules_dir):
+    with pytest.raises(HayabusaError, match="escapes"):
+        hayabusa.read_rule_file("../../etc/passwd.yml", rules_dir=str(rules_dir))
+
+
+def test_read_rule_file_missing_file_raises(rules_dir):
+    with pytest.raises(HayabusaError, match="not found"):
+        hayabusa.read_rule_file("creds/does_not_exist.yml", rules_dir=str(rules_dir))

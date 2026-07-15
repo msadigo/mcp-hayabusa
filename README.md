@@ -68,3 +68,31 @@ Returns the command that was run, exit code, a preview of up to 20 result
 records, the total record count, and truncated stdout/stderr. Pass
 `output_path` explicitly to keep the full result file on disk; otherwise a
 temporary file is used and removed after the preview is extracted.
+
+### `get_hayabusa_rules`
+
+Lists Hayabusa/Sigma detection rules, optionally filtered by keyword — useful
+for browsing/searching what's available before running `scan_evtx` with a
+`rule_filter`, since both use the same case-insensitive text match.
+
+Parameters: `keyword`, `rules_dir`, `max_results`.
+
+Returns `total_matched` (true count) and up to `max_results` rules, each with
+`path`, `id`, `title`, `level`, `status`, `description`, `author`, `tags`, and
+`logsource`.
+
+## Resources
+
+A read-only, browsable detection knowledge base — Sigma rules and their
+ATT&CK mappings — for a client to navigate directly instead of only through
+tool calls.
+
+| URI                             | Kind     | Description                                                                 |
+|----------------------------------|----------|------------------------------------------------------------------------------|
+| `hayabusa://attack`               | static   | Every ATT&CK technique ID present in the loaded rule set, with a rule count each. |
+| `hayabusa://attack/{technique_id}`| template | Rules tagged with one technique, e.g. `hayabusa://attack/T1003` (case-insensitive). |
+| `hayabusa://rules/{path}`         | template | Raw Sigma rule YAML (including its `detection:` logic) for one rule file.  |
+
+`path` in `hayabusa://rules/{path}` is a rule's `path` field from
+`get_hayabusa_rules` or an ATT&CK resource, with every `/` percent-encoded
+(`%2F`) — MCP resource URI templates only match a single path segment.
