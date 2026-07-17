@@ -75,3 +75,19 @@ Go through the same five checks and report every violation found — don't stop 
 For each violation, state which standard it breaks and what's missing (e.g. "no attack.tXXXX tag
 found in tags:" or "falsepositives is empty — needs at least one concrete condition"). A rule
 that passes all five is clean; anything less needs to go back before being merged or loaded.
+
+## References
+
+- [`references/example-rules/lsass_memory_access.yml`](references/example-rules/lsass_memory_access.yml)
+  — a rule satisfying all five standards above, with test evidence actually verified against a
+  real sample under `sample_evtx/`. Use it as a template for formatting and for what a real
+  (not placeholder) `falsepositives:`/test-evidence entry looks like.
+- [`references/severity-guide.md`](references/severity-guide.md) — what distinguishes `low` from
+  `medium` from `high` from `critical`, with worked examples, for justifying standard #2's
+  `level:` choice.
+- [`references/false-positive-patterns.md`](references/false-positive-patterns.md) — a catalog of
+  recurring FP sources (EDR agents, admin tooling, backup software, legacy auth flows, dev/test
+  activity, installers) to adapt when writing standard #3's `falsepositives:` list.
+- Also usable directly: [`scripts/validate-rule.py`](scripts/validate-rule.py) — a CLI that checks
+  a rule YAML against standards #1–#4 (tags, level, falsepositives, test-case evidence) and prints
+  a JSON pass/fail report (`python scripts/validate-rule.py <path-to-rule.yml>`).
