@@ -58,18 +58,39 @@ tool. If `$2` is omitted, skip time-scoping entirely; don't invent a default win
    resource if you already have a candidate technique ID from the rule tags. Build a de-duplicated
    list of `attack.tXXXX`/`attack.tXXXX.XXX` IDs found across the fired rules.
 
-5. **Generate an Obsidian-compatible markdown note** with:
+5. **Check detection coverage.** For each technique ID found in step 4, read the
+   `hayabusa://attack/{technique_id}` resource. Unlike `scan_evtx`/`get_hayabusa_rules`, this
+   resource has no `rules_dir` parameter — it always resolves against this repo's own default
+   rules directory (`./rules`, i.e. `rules/custom`), never `hayabusa/rules`. That's deliberate here:
+   it answers "do *we* have our own authored/vetted detection for this technique" rather than "did
+   the bundled third-party ruleset fire on it" — the scan itself may well have used
+   `rules_dir: hayabusa/rules` and found the technique via a bundled rule, which is a different
+   question from whether it's covered by a rule this repo tracks in git.
+   - If the resource returns one or more rules: status **Covered**, and record the filename
+     (basename of `path`, e.g. `lsass_memory_dump_via_comsvcs_minidump.yml`) of a matching rule.
+   - If it returns no rules: status **Gap**.
+
+6. **Generate an Obsidian-compatible markdown note** with:
    - YAML frontmatter: `date` (today, ISO), `tags` (e.g. `investigation`, plus one tag per
      technique like `T1003.001`), `techniques` (the list from step 4).
    - A `[[T1003.001]]`-style backlink for every technique found (as its own line or inline in the
      summary — Obsidian resolves these as note links, so use the bare technique ID, not a URL).
    - A findings summary in prose: what fired, what's notable, severity breakdown.
+   - A "Detection Coverage" table from step 5, one row per technique found in step 4:
+
+     ```
+     | Technique | Status | Rule |
+     |-----------|--------|------|
+     | [[T1003.001]] | Covered | `lsass_memory_access.yml` |
+     | [[T1550.002]] | Gap | No rule found |
+     ```
+
    - A "Scan parameters" section showing the raw contents of `$1` (and `$2` if given) verbatim, plus
      the total record count and level counts from the `ScanResult`.
    - An "Analyst notes" section — leave this as an empty/placeholder section (e.g. a single `_TBD_`
      line) for a human to fill in; don't invent analyst commentary.
 
-6. **Save the note** under `investigations/` at the repo root (create the directory if it doesn't
+7. **Save the note** under `investigations/` at the repo root (create the directory if it doesn't
    exist). Name the file `investigations/<YYYY-MM-DD>-<slug-from-params-filename>.md`, e.g.
    `investigations/2026-07-18-uname-discovery.md`. Report the saved path back to the user.
 
@@ -79,3 +100,6 @@ tool. If `$2` is omitted, skip time-scoping entirely; don't invent a default win
   `get_hayabusa_rules` MCP tools, consistent with how the rest of this project uses Hayabusa.
 - If `get_hayabusa_rules` or the ATT&CK resources return no technique for a fired rule, say so in
   the note rather than omitting the rule or guessing a technique ID.
+- A "Gap" in the Detection Coverage table does not mean the technique went undetected in this scan
+  — it means this repo has no rule of its own (under `rules/custom`) for it, even though a bundled
+  rule (under `hayabusa/rules`) may have fired. Don't conflate the two in the findings summary.

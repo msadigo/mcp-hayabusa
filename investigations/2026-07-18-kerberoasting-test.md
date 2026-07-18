@@ -38,6 +38,17 @@ evaluate that pattern.
 No high/critical hits and no other rule titles fired. Severity breakdown: medium — 2, all other
 levels — 0.
 
+## Detection Coverage
+
+| Technique | Status | Rule |
+|-----------|--------|------|
+| [[T1558.003]] | Gap | No rule found |
+
+This scan's hits came entirely from the bundled Hayabusa ruleset (`rules_dir: hayabusa/rules`).
+This repo's own custom rules (`rules/custom/`, tracked in git) have no rule tagged
+`attack.t1558.003` — so despite being detected here, Kerberoasting is a gap in this project's own
+authored detection coverage, not just an unfired technique.
+
 ## Scan parameters
 
 `$1` (`queries/kerberoasting-test.txt`):
